@@ -1,4 +1,6 @@
 
+import time
+import hashlib
 import datetime
 import dateutil.relativedelta
 
@@ -11,24 +13,25 @@ import tornado.gen
 import tornado.escape
 import tornado.websocket
 
+import tweet
 import database
 import console
 import setting
 
 
-class ContributionsHandler(tornado.web.RequestHandler):
-    def get(self):
-        self.render('static/contributions.html')
+# class ContributionsHandler(tornado.web.RequestHandler):
+#     def get(self):
+#         self.render('static/contributions.html')
 
 
-class ContributorsHandler(tornado.web.RequestHandler):
-    def get(self):
-        self.render('static/contributors.html')
+# class ContributorsHandler(tornado.web.RequestHandler):
+#     def get(self):
+#         self.render('static/contributors.html')
 
 
-class DashboardHandler(tornado.web.RequestHandler):
-    def get(self):
-        self.render('static/dashboard.html')
+# class DashboardHandler(tornado.web.RequestHandler):
+#     def get(self):
+#         self.render('static/dashboard.html')
 
 # class ContributorsAPIHandler(tornado.web.RequestHandler):
 #     def get(self):
@@ -134,6 +137,23 @@ class PersonsAPIHandler(tornado.web.RequestHandler):
         self.add_header('access-control-allow-origin', '*')
         self.finish(results)
 
+class PersonsAllAPIHandler(tornado.web.RequestHandler):
+    def get(self):
+        db_conn = database.get_conn()
+        event_rows = db_conn.iteritems()
+        event_rows.seek(b'profile_')
+        results = {}
+        for key, profile_json in event_rows:
+            if not key.startswith(b'profile_'):
+                break
+            # console.log(key, profile_json)
+            profile = tornado.escape.json_decode(profile_json)
+            if 'role' in profile and profile['role'] == 'person':
+                results[key.decode('utf8').replace('profile_', '')] = profile
+
+        self.add_header('access-control-allow-origin', '*')
+        self.finish(results)
+
 
 class OrganizationsAPIHandler(tornado.web.RequestHandler):
     def get(self):
@@ -170,15 +190,99 @@ class OrganizationsAPIHandler(tornado.web.RequestHandler):
         self.add_header('access-control-allow-origin', '*')
         self.finish(results)
 
+
+class OrganizationsSearchAPIHandler(tornado.web.RequestHandler):
+    def get(self):
+        k = self.get_argument('key')
+        p = self.get_argument('from', None)
+
+        db_conn = database.get_conn()
+        event_rows = db_conn.iteritems()
+        if p:
+            event_rows.seek(('profile_%s' % p).encode('utf8'))
+        else:
+            event_rows.seek(b'profile_')
+
+        results = {'organizations': []}
+        count = 0
+        for key, profile_json in event_rows:
+            if not key.startswith(b'profile_'):
+                break
+            if p:
+                p = None
+                continue
+
+            # console.log(key, profile_json)
+            profile = tornado.escape.json_decode(profile_json)
+            if 'role' in profile and profile['role'] == 'organization':
+                #results[key.decode('utf8').replace('profile_', '')] = profile
+                addr = key.decode('utf8').replace('profile_', '')
+                profile['address'] = addr
+                results['next'] = addr
+                if k in profile['name'] or k in profile['about']:
+                    results['organizations'].append(profile)
+
+            count += 1
+            # if count >= 10:
+            #     break
+
+        self.add_header('access-control-allow-origin', '*')
+        self.finish(results)
+
+
 class PartnersAPIHandler(tornado.web.RequestHandler):
     def get(self):
         db_conn = database.get_conn()
+        db_conn.put(('index_partner_%s_9' % '0x').encode('utf8'), b'0xd565c577983aedd61915b84763eea032069ba6aa')
+        db_conn.put(('index_partner_%s_8' % '0x').encode('utf8'), b'0xd565c577983aedd61915b84763eea032069ba6aa')
+
+        addr = self.get_argument('addr', setting.default_addr)
         p = self.get_argument('from', None)
+        results = {'partners': []}
+        event_rows = db_conn.iteritems()
+        event_rows.seek(('index_partner_%s_' % addr).encode('utf8'))
+        for key, user_addr in event_rows:
+            if not key.startswith(('index_partner_%s_' % addr).encode('utf8')):
+                break
+            console.log(key, user_addr)
+            profile_json = db_conn.get(b'profile_%s' % user_addr)
+            profile = tornado.escape.json_decode(profile_json)
+            if 'role' in profile and profile['role'] == 'person':
+                # results[key.decode('utf8').replace('profile_', '')] = profile
+                profile['address'] = user_addr.decode('utf8')
+                results['partners'].append(profile)
+                results['next'] = user_addr.decode('utf8')
+                results['total'] = 0
+
+        self.add_header('access-control-allow-origin', '*')
+        self.finish(results)
 
 class ReputationsAPIHandler(tornado.web.RequestHandler):
     def get(self):
         db_conn = database.get_conn()
+        db_conn.put(('index_reputation_%s_9' % '0x').encode('utf8'), b'0xd565c577983aedd61915b84763eea032069ba6aa')
+        db_conn.put(('index_reputation_%s_8' % '0x').encode('utf8'), b'0xd565c577983aedd61915b84763eea032069ba6aa')
+
+        addr = self.get_argument('addr', setting.default_addr)
         p = self.get_argument('from', None)
+        results = {'reputations': []}
+        event_rows = db_conn.iteritems()
+        event_rows.seek(('index_reputation_%s_' % addr).encode('utf8'))
+        for key, user_addr in event_rows:
+            if not key.startswith(('index_reputation_%s_' % addr).encode('utf8')):
+                break
+            console.log(key, user_addr)
+            profile_json = db_conn.get(b'profile_%s' % user_addr)
+            profile = tornado.escape.json_decode(profile_json)
+            if 'role' in profile and profile['role'] == 'person':
+                # results[key.decode('utf8').replace('profile_', '')] = profile
+                profile['address'] = user_addr.decode('utf8')
+                results['reputations'].append(profile)
+                results['next'] = user_addr.decode('utf8')
+                results['total'] = 0
+
+        self.add_header('access-control-allow-origin', '*')
+        self.finish(results)
 
 class AttestUserAPIHandler(tornado.web.RequestHandler):
     def get(self):
@@ -224,6 +328,92 @@ class NeedHandler(tornado.web.RequestHandler):
     def get(self):
         self.render('static/need.html')
 
+class PublicNeedAPIHandler(tornado.web.RequestHandler):
+    def get(self):
+        # addr = self.get_argument('addr')
+        tweets = []
+        db_conn = database.get_conn()
+
+        event_rows = db_conn.iteritems()
+        event_rows.seek(b'timeline_')
+        for event_key, event_id in event_rows:
+            if not event_key.startswith(b'timeline_'):
+                break
+            event_json = db_conn.get(b'event_%s' % event_id)
+            event_obj = tornado.escape.json_decode(event_json)
+            root_id = event_obj['id']
+            for tag in event_obj.get('tags', []):
+                if tag[0] == 'r':
+                    root_id = tag[1]
+                    break
+
+            tweet_json = db_conn.get(b'tweet_%s' % root_id.encode('utf8'))
+            tweet_obj = tornado.escape.json_decode(tweet_json)
+            tweet.load_content(db_conn, tweet_obj)
+            tweets.append(tweet_obj)
+
+        self.finish({'tweets': tweets})
+
+class RelatedNeedAPIHandler(tornado.web.RequestHandler):
+    def get(self):
+        addr = self.get_argument('addr')
+        tweets = []
+        db_conn = database.get_conn()
+
+        event_rows = db_conn.iteritems()
+        event_rows.seek(('user_%s' % addr).encode('utf8'))
+        for event_key, event_id in event_rows:
+            if not event_key.startswith(('user_%s' % addr).encode('utf8')):
+                break
+            #self.write(event_key.decode('utf8'))
+            #self.write('<br>')
+            #self.write(event_id.decode('utf8')+'\n')
+            #self.write('<br>')
+            event_json = db_conn.get(b'event_%s' % event_id)
+            #self.write(event_json.decode('utf8')+'\n')
+            event_obj = tornado.escape.json_decode(event_json)
+            root_id = event_obj['id']
+            for tag in event_obj.get('tags', []):
+                if tag[0] == 'r':
+                    root_id = tag[1]
+                    break
+
+            tweet_json = db_conn.get(b'tweet_%s' % root_id.encode('utf8'))
+            tweet_obj = tornado.escape.json_decode(tweet_json)
+            #self.write('<br><br>')
+            tweets.append(tweet_obj)
+
+        self.finish({'tweets': tweets})
+
+class MyNeedAPIHandler(tornado.web.RequestHandler):
+    def get(self):
+        addr = self.get_argument('addr')
+        tweets = []
+        db_conn = database.get_conn()
+
+        event_rows = db_conn.iteritems()
+        event_rows.seek(('user_%s' % addr).encode('utf8'))
+        for event_key, event_id in event_rows:
+            if not event_key.startswith(('user_%s' % addr).encode('utf8')):
+                break
+
+            event_json = db_conn.get(b'event_%s' % event_id)
+            event_obj = tornado.escape.json_decode(event_json)
+            root_id = event_obj['id']
+            for tag in event_obj.get('tags', []):
+                if tag[0] == 'r':
+                    root_id = tag[1]
+                    break
+            if event_id.decode('utf8') != root_id:
+                continue
+
+            tweet_json = db_conn.get(b'tweet_%s' % root_id.encode('utf8'))
+            tweet_obj = tornado.escape.json_decode(tweet_json)
+            tweets.append(tweet_obj)
+
+        self.finish({'tweets': tweets})
+
+
 class OrganizationsHandler(tornado.web.RequestHandler):
     def get(self):
         self.render('static/organizations.html')
@@ -241,3 +431,19 @@ class OrganizationHandler(tornado.web.RequestHandler):
 
         self.render('static/organization.html')
 
+class RecommendAPIHandler(tornado.web.RequestHandler):
+    def post(self):
+        timestamp = int(self.get_argument('timestamp', 0))
+        pwd = self.get_argument('pwd')
+        if abs(time.time() - timestamp) > 30:
+            return
+        pwd2 = hashlib.sha256('%s_%s' % (setting.recommend_pwd, timestamp)).hexdigest()
+        if pwd2 != pwd:
+            return
+
+        data_json = self.get_argument('data')
+        data = tornado.escape.json_decode(data_json)
+        db_conn = database.get_conn()
+        for k, v in data.items():
+            db_conn.put(k.encode('utf8'), v.encode('utf8'))
+        self.finish({})

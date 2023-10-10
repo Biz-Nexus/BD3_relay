@@ -15,6 +15,7 @@ import tornado.escape
 import tornado.websocket
 
 import bd3
+import tweet
 import database
 import console
 
@@ -139,28 +140,37 @@ class RelayHandler(tornado.websocket.WebSocketHandler):
 
             msg = json.dumps([0, addr, timestamp, kind, tags, content], separators=(',', ':'), ensure_ascii=False)
             message = eth_account.messages.encode_defunct(text=msg)
-            # console.log(message)
+            console.log(sig)
             sender = eth_account.Account.recover_message(message, signature=bytes.fromhex(sig[2:]))
             console.log(sender, addr)
-            assert sender.lower() == addr
+            assert sender.lower() == addr.lower()
 
-            if kind == 0:
+            if kind == 0: # profile
                 console.log('content', content)
                 db_conn.put(b'profile_%s' % (addr.encode('utf8')), tornado.escape.json_encode(content).encode('utf8'))
 
-            elif kind == 1:
-                tags = seq[1]['tags']
+            elif kind == 1: # tweet
+                root_id = event_id
+                root_tweet = {'id': event_id}
                 for tag in tags:
                     if tag[0] == 't':
                         console.log('t', tag)
                         hashed_tag = hashlib.sha256(tag[1].encode('utf8')).hexdigest()
                         db_conn.put(b'hashtag_%s_%s' % (hashed_tag.encode('utf8'), str(timestamp).encode('utf8')), event_id.encode('utf8'))
 
-                db_conn.put(b'timeline_%s_%s' % (str(timestamp).encode('utf8'), addr.encode('utf8')), event_id.encode('utf8'))
-                db_conn.put(b'tweet_%s' % (event_id.encode('utf8'), ), tornado.escape.json_encode({}).encode('utf8'))
+                    elif tag[0] == 'r':
+                        root_id = tag[1]
+                        parent_id = tag[2]
+                        root_tweet_json = db_conn.get(('tweet_%s' % root_id).encode('utf8'))
+                        root_tweet = tornado.escape.json_decode(root_tweet_json)
+                        reply_tweet = {'id': event_id}
+                        console.log(root_tweet, parent_id, reply_tweet)
+                        tweet.reply(root_tweet, parent_id, reply_tweet)
 
-            elif kind == 3:
-                tags = seq[1]['tags']
+                db_conn.put(('timeline_%s_%s' % (str(timestamp), addr)).encode('utf8'), event_id.encode('utf8'))
+                db_conn.put(('tweet_%s' % root_id).encode('utf8'), tornado.escape.json_encode(root_tweet).encode('utf8'))
+
+            elif kind == 3: # follow like
                 for tag in tags:
                     if tag[0] == 'follow':
                         console.log('follow', tag)
@@ -172,28 +182,28 @@ class RelayHandler(tornado.websocket.WebSocketHandler):
                         console.log('like', tag)
                         tweet_event_id = tag[1]
                         tweet_json = db_conn.get(b'tweet_%s' % (tweet_event_id.encode('utf8'), ))
-                        tweet = tornado.escape.json_decode(tweet_json)
-                        console.log('tweet', tweet)
-                        tweet.setdefault('likes', [])
-                        tweet.setdefault('dislikes', [])
+                        tweet_obj = tornado.escape.json_decode(tweet_json)
+                        console.log('tweet', tweet_obj)
+                        tweet_obj.setdefault('likes', [])
+                        tweet_obj.setdefault('dislikes', [])
 
                     elif tag[0] == 'dislike':
                         console.log('dislike', tag)
                         tweet_event_id = tag[1]
                         tweet_json = db_conn.get(b'tweet_%s' % (tweet_event_id.encode('utf8'), ))
-                        tweet = tornado.escape.json_decode(tweet_json)
-                        console.log('tweet', tweet)
-                        tweet.setdefault('likes', [])
-                        tweet.setdefault('dislikes', [])
+                        tweet_obj = tornado.escape.json_decode(tweet_json)
+                        console.log('tweet', tweet_obj)
+                        tweet_obj.setdefault('likes', [])
+                        tweet_obj.setdefault('dislikes', [])
 
                     elif tag[0] == 'unlike':
                         console.log('unlike', tag)
                         tweet_event_id = tag[1]
                         tweet_json = db_conn.get(b'tweet_%s' % (tweet_event_id.encode('utf8'), ))
-                        tweet = tornado.escape.json_decode(tweet_json)
-                        console.log('tweet', tweet)
-                        tweet.setdefault('likes', [])
-                        tweet.setdefault('dislikes', [])
+                        tweet_obj = tornado.escape.json_decode(tweet_json)
+                        console.log('tweet', tweet_obj)
+                        tweet_obj.setdefault('likes', [])
+                        tweet_obj.setdefault('dislikes', [])
 
                     elif tag[0] == 'attest':
                         console.log('attest', tag)
@@ -218,6 +228,11 @@ class RelayHandler(tornado.websocket.WebSocketHandler):
             console.log('data', data)
             db_conn.put(b'event_%s' % (event_id.encode('utf8'), ), data.encode('utf8'))
             db_conn.put(b'user_%s_%s' % (addr.encode('utf8'), str(timestamp).encode('utf8')), event_id.encode('utf8'))
+
+            #['OK', <event_id>, <true|false>, <message>]
+            rsp = ['OK', event_id]
+            rsp_json = tornado.escape.json_encode(rsp)
+            self.write_message(rsp_json)
 
         elif seq[0] == 'CLOSE':
             pass
@@ -323,8 +338,13 @@ class Application(tornado.web.Application):
                 (r"/organization", bd3.OrganizationHandler),
                 (r"/organizations", bd3.OrganizationsHandler),
                 (r"/need", bd3.NeedHandler),
+                (r"/api/my_needs", bd3.MyNeedAPIHandler),
+                (r"/api/related_needs", bd3.RelatedNeedAPIHandler),
+                (r"/api/public_needs", bd3.PublicNeedAPIHandler),
                 (r"/api/persons", bd3.PersonsAPIHandler),
+                (r"/api/persons_all", bd3.PersonsAllAPIHandler), # for algorithm
                 (r"/api/organizations", bd3.OrganizationsAPIHandler),
+                (r"/api/organizations_search", bd3.OrganizationsSearchAPIHandler),
                 (r"/api/partners", bd3.PartnersAPIHandler),
                 (r"/api/reputations", bd3.ReputationsAPIHandler),
                 (r"/api/attest_user", bd3.AttestUserAPIHandler),
